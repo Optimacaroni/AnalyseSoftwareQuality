@@ -1,0 +1,17 @@
+def ShowData(tr):
+    # Travellers: [customer_id, first_name, last_name, birthday, gender,
+    #              street_name, house_number, zip_code, city, email, mobile_phone,
+    #              driving_license_number, registration_date]
+    print(f"> Name:         {tr[1]} {tr[2]}")
+    print(f"> Customer ID:  {tr[0]}")
+    print(f"> Birthday:     {tr[3]}")
+    print(f"> Gender:       {tr[4]}")
+    print("> Address")
+    print(f"     Street:          {tr[5]}")
+    print(f"     House Number:    {tr[6]}")
+    print(f"     Zip Code:        {tr[7]}")
+    print(f"     City:            {tr[8]}")
+    print(f"> Email:        {tr[9]}")
+    print(f"> Mobile Phone: {tr[10]}")
+    print(f"> Driving Lic.: {tr[11]}")
+    print(f"> Registered:   {tr[12] if len(tr) > 12 else ''}")

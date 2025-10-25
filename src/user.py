@@ -5,6 +5,7 @@ from getpass import getpass
 from safe_data import *
 from validation import *
 import um_members
+import database
 
 # logging.
 from log_config import logmanager as log_manager
@@ -84,10 +85,10 @@ def create_account(role):
 
         hashedPassword = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
 
-        # store normalized username
-        enc_username = encrypt_data(public_key(), normalized)
-        enc_firstName = encrypt_data(public_key(), firstName)
-        enc_lastName = encrypt_data(public_key(), lastName)
+        # store normalized username using centralized helper (handles encryption)
+        enc_username = database.validate_and_prepare_value('Users', 'username', normalized)
+        enc_firstName = database.validate_and_prepare_value('Users', 'first_name', firstName)
+        enc_lastName = database.validate_and_prepare_value('Users', 'last_name', lastName)
 
         connection = sqlite3.connect("scooterfleet.db")
         cursor = connection.cursor()

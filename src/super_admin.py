@@ -6,6 +6,7 @@ import database
 import um_members
 import traveller
 import user
+import scooter_logic
 # Validation
 from validation import *
 
@@ -28,6 +29,9 @@ import os
 import shutil
 import secrets
 import string
+
+# scooter logic (add/modify/delete scooter)
+from scooter_logic import add_scooter, modify_scooter, delete_scooter
 
 # Hardcoded gegevens
 super_username="super_admin"
@@ -110,25 +114,25 @@ def list_users(_username, role_filter=None):
             print(f"{id:<5}{username:<25}{role:<18}")
 
         print(f"\n--- page {page + 1} / {total_pages} ---")
-        print("N. Next page")
-        print("P. Previous page")
-        print("B. Go back")
+        print("1. Next page")
+        print("2. Previous page")
+        print("3. Go back")
         choice = input("Choose an option (1/2/3): ").strip().lower()
-        if choice == "n":
+        if choice == "1":
             if page == total_pages - 1:
                 print("You have reached the last page")
                 time.sleep(2)
                 continue
             else:
                 page += 1
-        elif choice == "p":
+        elif choice == "2":
             if page == 0:
                 print("You are already at the first page")
                 time.sleep(2)
                 continue
             else:
                 page -= 1
-        elif choice == "b":
+        elif choice == "3":
             um_members.clear()
             break
         else:
@@ -350,11 +354,11 @@ def scooter_menu(username, role):
         choice = input("Choose an option: ").strip()
 
         if choice == "1" and role != "service_engineer":
-            add_scooter(username)
+            scooter_logic.add_scooter(username)
         elif choice == "2":
-            modify_scooter(username, role)
+            scooter_logic.modify_scooter(username, role)
         elif choice == "3" and role != "service_engineer":
-            delete_scooter(username)
+            scooter_logic.delete_scooter(username)
         elif choice == "4":
             search_people("scooter", username)
         elif choice == "5":
@@ -364,20 +368,34 @@ def scooter_menu(username, role):
             time.sleep(2)
 
 def modify_data(datatype_to_update, table_to_update, id_to_update, new_data) -> bool:
+    # Validate & prepare the value using centralized helper
+    try:
+        value = database.validate_and_prepare_value(table_to_update, datatype_to_update, new_data)
+    except ValueError as e:
+        print(str(e))
+        return False
+
+    # Determine id field
+    if table_to_update == "Users":
+        id_field = "id"
+    elif table_to_update == "Travellers":
+        id_field = "customer_id"
+    else:
+        id_field = "scooter_id"
+
     connection = sqlite3.connect("scooterfleet.db")
     cursor = connection.cursor()
 
-    new_data = encrypt_data(public_key(), new_data)
-    id_field = "id" if table_to_update == "Users" else ("customer_id" if table_to_update == "Travellers" else "scooter_id")
-
-    cursor.execute(f"UPDATE {table_to_update} SET {datatype_to_update} = ? WHERE {id_field} = ?", (new_data, id_to_update))
+    sql = f"UPDATE {table_to_update} SET {datatype_to_update} = ? WHERE {id_field} = ?"
+    cursor.execute(sql, (value, id_to_update))
     connection.commit()
-    
+
     if cursor.rowcount == 0:
         print(f"No rows found with id {id_to_update}.")
         time.sleep(2)
         connection.close()
         return False
+
     connection.close()
     return True
 
@@ -552,10 +570,17 @@ def delete_user(role, username):
             if choice_two in ["n", "no"]:
                 break
             elif choice_two in ["y", "yes"]:
-                cursor.execute("DELETE FROM Travellers WHERE customer_id = ?", (search_results,))
+                # search_people returns the customer_id (string) or None
+                cust_id = search_results
+                if cust_id is None:
+                    print("No traveller selected; aborting.")
+                    time.sleep(2)
+                    break
+                # Ensure parameter is a single-element tuple
+                cursor.execute("DELETE FROM Travellers WHERE customer_id = ?", (cust_id,))
                 connection.commit()
                 print(f"{role.capitalize()} deleted successfully")
-                log_instance.log_activity(username, "Delete traveller", f"Deleted traveller with id: {search_results}", "No")
+                log_instance.log_activity(username, "Delete traveller", f"Deleted traveller with id: {cust_id}", "No")
                 time.sleep(2)
                 break
             else:
@@ -577,6 +602,26 @@ def delete_user(role, username):
                 print("Please enter a valid number.")
                 time.sleep(2)
                 continue
+            # At this point we have a validated numeric choice; perform deletion
+            selected = search_results[choice]
+            selected_id = selected[0]
+            confirm = input(f"Are you sure you want to delete user id {selected_id}? (y/n): ").strip().lower()
+            if confirm not in ("y", "yes"):
+                print("Delete cancelled")
+                time.sleep(1)
+                break
+            cursor.execute("DELETE FROM Users WHERE id = ?", (selected_id,))
+            connection.commit()
+            print("User deleted successfully")
+            # Try to decrypt username for logging if possible
+            try:
+                enc_uname = selected[1]
+                dec_uname = decrypt_data(private_key(), enc_uname)
+            except Exception:
+                dec_uname = str(selected_id)
+            log_instance.log_activity(username, "Delete user", f"Deleted user id: {selected_id}, username: {dec_uname}", "No")
+            time.sleep(2)
+            break
 
 def reset_pw(role, username):
     um_members.clear()
@@ -663,13 +708,20 @@ def add_traveller(username):
     checksum %= 10
     customer_id += str(checksum)
 
-    # encryption
-    enc = lambda v: encrypt_data(public_key(), v)
+    # Prepare and validate fields using centralized helper which handles encryption
     data = (
         customer_id,
-        enc(first_name), enc(last_name), enc(birthday), enc(gender), enc(street),
-        enc(house_number), enc(zip_code), enc(city),
-        enc(email), enc("+31-6-" + mobile), enc(driving_license)
+        database.validate_and_prepare_value('Travellers', 'first_name', first_name),
+        database.validate_and_prepare_value('Travellers', 'last_name', last_name),
+        database.validate_and_prepare_value('Travellers', 'birthday', birthday),
+        database.validate_and_prepare_value('Travellers', 'gender', gender),
+        database.validate_and_prepare_value('Travellers', 'street_name', street),
+        database.validate_and_prepare_value('Travellers', 'house_number', house_number),
+        database.validate_and_prepare_value('Travellers', 'zip_code', zip_code),
+        database.validate_and_prepare_value('Travellers', 'city', city),
+        database.validate_and_prepare_value('Travellers', 'email', email),
+        database.validate_and_prepare_value('Travellers', 'mobile_phone', "+31-6-" + mobile),
+        database.validate_and_prepare_value('Travellers', 'driving_license_number', driving_license)
     )
 
     cursor.execute("""

@@ -1,9 +1,8 @@
 import logging
 from logging.handlers import TimedRotatingFileHandler
 import os
+import base64
 from safe_data import *
-import um_members
-import ast
 
 
 class logmanager:
@@ -36,14 +35,20 @@ class logmanager:
 
     # Function to log activities
     def log_activity(self, username, description, additional_info=None, suspicious='No'):
-        log_entry = f"{username} - {description} - {additional_info or ''} - Suspicious: {suspicious}"
-        log_entry = encrypt_data(public_key(), log_entry)
+        raw_entry = f"{username} - {description} - {additional_info or ''} - Suspicious: {suspicious}"
+        ciphertext = encrypt_data(public_key(), raw_entry)
+        # store as base64 text so the log file remains ASCII and easily parseable
+        try:
+            b64 = base64.b64encode(ciphertext).decode('ascii')
+        except Exception:
+            # fallback: store repr of bytes
+            b64 = repr(ciphertext)
 
         if suspicious == 'Yes':
-            self.logger.warning(log_entry)
+            self.logger.warning(b64)
             logmanager.unread_suspicious_count += 1
         else:
-            self.logger.info(log_entry)
+            self.logger.info(b64)
 
     def show_notifications(self):
         if logmanager.unread_suspicious_count > 0:
@@ -57,6 +62,9 @@ class logmanager:
         file_path = self.log_file_path
         if date:
             file_path = f'{self.log_file_path}.{date}'
+
+        # lazy import moved here (before use) to avoid circular import issues
+        import um_members
 
         try:
             with open(file_path, 'r') as file:
@@ -72,26 +80,53 @@ class logmanager:
                     current_page_lines = lines[start_index:end_index]
 
                     for line in current_page_lines:
-                        line = line.split(" - ")
-                        line[2] = ast.literal_eval(line[2])
-                        print(str(line[0]), "- ", end="")
-                        print(str(line[1]), "- ", end="")
-                        print(decrypt_data(private_key(), line[2]))
+                        # split into three parts only: timestamp, level, message
+                        parts = line.split(" - ", 2)
+                        # lazy import to avoid circular import issues
+                        import um_members
+                        decrypted = "<unreadable log entry>"
+                        if len(parts) >= 3:
+                            b64msg = parts[2].strip()
+                            try:
+                                # first try base64 decode
+                                try:
+                                    ciphertext = base64.b64decode(b64msg)
+                                except Exception:
+                                    # if not valid base64, attempt literal eval to get bytes repr
+                                    try:
+                                        import ast as _ast
+                                        ciphertext = _ast.literal_eval(b64msg)
+                                    except Exception:
+                                        ciphertext = None
+
+                                if ciphertext:
+                                    decrypted = decrypt_data(private_key(), ciphertext)
+                                else:
+                                    decrypted = b64msg
+                            except Exception:
+                                decrypted = "<unreadable log entry>"
+
+                        # print timestamp, level, and decrypted message
+                        ts = parts[0] if len(parts) > 0 else ''
+                        level = parts[1] if len(parts) > 1 else ''
+                        print(str(ts), "- ", end="")
+                        print(str(level), "- ", end="")
+                        print(decrypted)
 
 
                     print(f"\n--- Page {page + 1} / {pages} ---\n")
-                    print("N. Next page")
-                    print("P. Previous page")
-                    print("B. Go back")
+                    print("1. Next page")
+                    print("2. Previous page")
+                    print("3. Go back")
                     choice = input("Choose an option (1/2/3): ").strip().lower()
 
-                    if choice == "n":
+                    if choice == "1":
                         if page < pages - 1:
                             page += 1
-                    elif choice == "p":
+                    elif choice == "2":
                         if page > 0:
                             page -= 1
-                    elif choice == "b":
+                    elif choice == "3":
                         logmanager.unread_suspicious_count = 0
                         break
                     else:

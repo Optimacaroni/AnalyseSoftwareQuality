@@ -1,8 +1,9 @@
 # Accountlevels
 import engineer
 import admin
-from super_admin import super_username, super_password
-import super_admin
+# Hard-coded super admin credentials (avoid importing super_admin to prevent circular import)
+super_username = "super_admin"
+super_password = "Admin_123?"
 
 # database
 import sqlite3
@@ -97,6 +98,8 @@ def Login():
                     log_instance.log_activity(decrypted_username, "Login failed", "Entered invalid password", "No")
         elif username_input == super_username and password_input == super_password:
             log_instance.log_activity(super_username, "Login successful", "Super admin logged in", "No")
+            # import here to avoid circular import at module level
+            import super_admin
             super_admin.menu()
             break
         else:

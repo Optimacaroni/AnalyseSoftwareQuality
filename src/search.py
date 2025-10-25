@@ -1,4 +1,5 @@
 import sqlite3
+import re
 from safe_data import *
 
 '''
@@ -15,11 +16,25 @@ display_search_results(search_results)
 -----------------------------------------------------
 '''
 
+def _is_valid_identifier(name: str) -> bool:
+    # basic identifier validation: starts with letter or underscore, followed by letters/digits/underscores
+    return bool(re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name))
+
+
+# Whitelist of allowed tables (uppercase)
+ALLOWED_TABLES = {"USERS", "TRAVELLERS", "SCOOTERS", "RESTORECODES"}
+
+
 def search(search_term, table, column="*", role=None):
     connection = sqlite3.connect("scooterfleet.db")
     cursor = connection.cursor()
 
     table = table.upper()
+    # reject unknown or malicious table identifiers
+    if table not in ALLOWED_TABLES:
+        return f"Invalid table: {table}"
+
+    # PRAGMA with validated table name
     cursor.execute(f"PRAGMA table_info({table})")
     columns_info = cursor.fetchall()
     columns = [info[1] for info in columns_info if "password" not in info[1].lower()]
@@ -28,10 +43,29 @@ def search(search_term, table, column="*", role=None):
         return f"No columns found in {table}"
 
     if column != "*":
-        column = column if column in columns else "*"
+        # allow searching only in an existing column
+        column_candidate = column
+        if not _is_valid_identifier(column_candidate):
+            column = "*"
+        else:
+            # match case-insensitive against PRAGMA columns
+            matched = None
+            for c in columns:
+                if c.lower() == column_candidate.lower():
+                    matched = c
+                    break
+            column = matched if matched else "*"
 
-    columns_to_query = ", ".join(columns) if column == "*" else column
+    # build safe columns_to_query string by validating each identifier
+    if column == "*":
+        columns_to_query = ", ".join(columns)
+    else:
+        # column validated already; ensure it is a safe identifier
+        if not _is_valid_identifier(column):
+            return "Invalid column name"
+        columns_to_query = column
 
+    # final safety: table and columns_to_query are validated; now construct query
     if role:
         query = f"SELECT {columns_to_query} FROM {table} WHERE role_level = ?"
         cursor.execute(query, (role,))

@@ -137,3 +137,4 @@ coverage.xml
 
 # Allow local overrides
 !.gitignore.local
+src/um.key

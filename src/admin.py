@@ -7,45 +7,30 @@ import bcrypt
 import time
 
 import um_members
-from super_admin import *
+from super_admin import scooter_menu, service_engineer_menu, system_menu, traveller_menu, list_users
+from safe_data import private_key, decrypt_data
+from validation import validate_password
 
 # logging
 from log_config import logmanager as log_manager
 log_instance = log_manager()
 
 def menu(username):
-    um_members.clear()
-    connection = sqlite3.connect("scooterfleet.db")
-    cursor = connection.cursor()
-
-    cursor.execute("SELECT username, password, role_level FROM Users WHERE username =?", (username,))
-    user_data = cursor.fetchone()
-
     while True:
+        um_members.clear()
         print("\n--- System Admin Menu ---")
         print(f"--Welcome {username}--")
         log_instance.show_notifications()
     #Own account
         print("1. Update password")
-    #List of users
         print("2. List of users")
-    #Add new service engineer
-    #Modify, update service engineer
-    #Delete service engineer
-    #Give service engineer temp password
         print("3. Service engineer menu")
-    #Backup, restore members info, users data
-    #See logs
         print("4. System")
-    #Add new traveller
-    #Modify or update traveller
-    #Delete traveller
-    #Search, retrieve info of traveller
         print("5. Traveller menu")
-    # logout
-        print("6. Logout")
+        print("6. Scooter menu")
+        print("7. Logout")
 
-        choice = input("Choose an option (1/2/3/4/5/6): ").strip()
+        choice = input("Choose an option (1/2/3/4/5/6/7): ").strip()
 
         if choice == "1":
             um_members.clear()
@@ -62,6 +47,9 @@ def menu(username):
             um_members.clear()    
             traveller_menu(username)
         elif choice == "6":
+            um_members.clear()
+            scooter_menu(username, role="system_admin")
+        elif choice == "7":
             print("You logged out, Goodbye!")
             log_instance.log_activity(username, "System", "Program exited", "No")
             break
@@ -70,14 +58,12 @@ def menu(username):
             log_instance.log_activity(username, "System", "Invalid input at the modifying menu", "No")
             time.sleep(2)
 
-# Functions
 def update_password(username):
     connection = sqlite3.connect("scooterfleet.db")
     cursor = connection.cursor()
 
     um_members.clear()
     print("\n--- Update Password ---")
-    # Login with current password
     cursor.execute("SELECT * FROM Users")
     user_data = cursor.fetchall()
     decrypted_username = ""
@@ -104,7 +90,6 @@ def update_password(username):
             um_members.clear()
             print("\n--- Update Password ---")
             new_password = getpass("Enter your new password: ")
-            # Additional validation: must not equal old password and must meet complexity rules
             if new_password == input_password:
                 um_members.clear()
                 print("New password must be different from the old password.")
@@ -117,7 +102,6 @@ def update_password(username):
                 log_instance.log_activity(username, "Update password", "Invalid new password (complexity)", "No")
                 time.sleep(2)
                 continue
-            # Confirm password to avoid typos
             confirm_password = getpass("Confirm new password: ")
             if confirm_password != new_password:
                 um_members.clear()
@@ -126,10 +110,8 @@ def update_password(username):
                 time.sleep(2)
                 continue
             else:
-                # enter password in database
                 hashed_password = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt())
 
-                # Find encrypted username to update
                 cursor.execute("SELECT * FROM Users")
                 user_data = cursor.fetchall()
                 decrypted_username = ""

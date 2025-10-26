@@ -1,27 +1,33 @@
-# Database
 import sqlite3
 import database
 
-# Own modules
 import um_members
 import traveller
 import user
 import scooter_logic
-# Validation
-from validation import *
+from validation import (
+    validate_first_name,
+    validate_last_name,
+    validate_birthday,
+    validate_gender,
+    validate_street,
+    validate_house_number,
+    validate_postal_code,
+    validate_city,
+    validate_email,
+    validate_phone_number,
+    validate_driving_license,
+    validate_username,
+    )
 
-# Logging
 from log_config import logmanager as log_manager
 log_instance = log_manager()
 
-# cryptography and hashing
 import bcrypt
-from safe_data import *
+from safe_data import private_key, decrypt_data
 
-# search
-from search import *
+from search import search, display_search_results
 
-# centralized ACL
 from acl import require_role
 
 from ui_helpers import prompt_with_back, clear as ui_clear
@@ -35,18 +41,13 @@ import shutil
 import secrets
 import string
 
-# scooter logic (add/modify/delete scooter)
-from scooter_logic import add_scooter, modify_scooter, delete_scooter
+import scooter_logic
 
 # Hardcoded gegevens
 super_username="super_admin"
 super_password="Admin_123?"
 
 def menu():
-    um_members.clear()
-    connection = sqlite3.connect("scooterfleet.db")
-    cursor = connection.cursor()
-
     while True:
         um_members.clear()
         log_instance.show_notifications()
@@ -87,9 +88,8 @@ def menu():
             print("Invalid input")
             log_instance.log_activity(super_username, "System", "Invalid input in the main menu", "No")
             time.sleep(2)
-            connection.close()
 
-def list_users(_username, role_filter=None):
+def list_users(username, role_filter=None):
     connection = sqlite3.connect("scooterfleet.db")
     cursor = connection.cursor()
 
@@ -103,15 +103,25 @@ def list_users(_username, role_filter=None):
     for id, username, role in user_data:
         decrypted_username = decrypt_data(private_key(), username)
         decrypted_user_data.append((id, decrypted_username, role))
-    # Reuse the paginated display used by search results so layout is consistent across lists
+
     search_results = []
     search_results.append(["ID", "USERNAME", "ROLE"])
     for id, uname, role in decrypted_user_data:
-        search_results.append([id, uname, role])
+        display_name = uname
+        try:
+            if username and isinstance(username, str) and uname.lower() == username.lower():
+                display_name = f"{uname} (you)"
+        except Exception:
+            display_name = uname
+        search_results.append([id, display_name, role])
 
     um_members.clear()
     print("\n--- List of users ---")
-    # show_numbers=False because this is a pure listing (no selection expected)
+    try:
+        actor = username if username else "System"
+        log_instance.log_activity(actor, "List users", "Viewed user list", "No")
+    except Exception:
+        pass
     display_search_results(search_results, show_numbers=False)
     input("Press Enter to return...")
     connection.close()
@@ -342,14 +352,12 @@ def scooter_menu(username, role):
             time.sleep(2)
 
 def modify_data(datatype_to_update, table_to_update, id_to_update, new_data) -> bool:
-    # Validate & prepare the value using centralized helper
     try:
         value = database.validate_and_prepare_value(table_to_update, datatype_to_update, new_data)
     except ValueError as e:
         print(str(e))
         return False
 
-    # Determine id field
     if table_to_update == "Users":
         id_field = "id"
     elif table_to_update == "Travellers":
@@ -371,6 +379,7 @@ def modify_data(datatype_to_update, table_to_update, id_to_update, new_data) -> 
 
     return True
 
+@require_role('system_admin')
 def modify_user(role, username):
     while True:
         um_members.clear()
@@ -378,7 +387,6 @@ def modify_user(role, username):
     
         if role in ["system_admin", "service_engineer"]:
             search_term = prompt_with_back("Enter search term: ")
-            # Enter or 'b' cancels/back
             if search_term is None:
                 break
             search_results = search(search_term, "Users", role=role)
@@ -401,7 +409,6 @@ def modify_user(role, username):
                 print(" 2. First name")
                 print(" 3. Last name")
                 choice = prompt_with_back("\nChoose the field you want to change (1/2/3) (press Enter to go back): ")
-                # prompt_with_back returns None for Enter or 'b'
                 if choice is None:
                     ui_clear()
                     break
@@ -461,7 +468,6 @@ def modify_user(role, username):
         
         elif role == "traveller":
             search_term = prompt_with_back("Enter search term: ")
-            # Enter or 'b' cancels/back
             if search_term is None:
                 break
             search_results = search(search_term, "Travellers")
@@ -543,10 +549,8 @@ def delete_user(role, username):
 
     while True:
         print(f"\n--- Delete {role} ---")
-        # Handle travellers using a numbered selection flow similar to delete_scooter
         if role == "traveller":
             term = prompt_with_back("Enter search term: ")
-            # Enter or 'b' cancels/back
             if term is None:
                 break
             results = search(term, "Travellers")
@@ -571,7 +575,6 @@ def delete_user(role, username):
                 break
             selected = results[choice]
             cust_id = selected[0]
-            # Try to decrypt some identifying fields for clarity
             try:
                 first = decrypt_data(private_key(), selected[1]) if isinstance(selected[1], (bytes, bytearray)) else selected[1]
             except Exception:
@@ -593,7 +596,6 @@ def delete_user(role, username):
             time.sleep(2)
             break
 
-        # Non-traveller flows (users/admins) - use existing search_people for consistency
         else:
             search_results = search_people(role, username)
 
@@ -616,7 +618,6 @@ def delete_user(role, username):
                 print("Please enter a valid number.")
                 time.sleep(2)
                 continue
-            # At this point we have a validated numeric choice; perform deletion
             selected = search_results[choice]
             selected_id = selected[0]
             confirm = input(f"Are you sure you want to delete user id {selected_id}? (y/n): ").strip().lower()
@@ -627,7 +628,6 @@ def delete_user(role, username):
             cursor.execute("DELETE FROM Users WHERE id = ?", (selected_id,))
             connection.commit()
             print("User deleted successfully")
-            # Try to decrypt username for logging if possible
             try:
                 enc_uname = selected[1]
                 dec_uname = decrypt_data(private_key(), enc_uname)
@@ -637,6 +637,7 @@ def delete_user(role, username):
             time.sleep(2)
             break
 
+@require_role('system_admin')
 def reset_pw(role, username):
     um_members.clear()
     connection = sqlite3.connect("scooterfleet.db")
@@ -700,7 +701,6 @@ def add_traveller(username):
     um_members.clear()
     print("\n--- Register Traveller ---")
 
-    # Input and validation
     first_name = input_and_validate("Enter first name: ", validate_first_name)
     last_name = input_and_validate("Enter last name: ", validate_last_name)
     birthday = input_and_validate("Enter birthday (YYYY-MM-DD): ", validate_birthday)
@@ -709,7 +709,7 @@ def add_traveller(username):
     street = input_and_validate("Enter street: ", validate_street)
     house_number = input_and_validate("Enter house number: ", validate_house_number)
     zip_code = input_and_validate("Enter zip code (e.g., 1234AB): ", validate_postal_code)
-    # Show predefined cities and require selection by number only
+
     from database import Cities as PREDEFINED_CITIES
     print("Choose city from the list below (enter the number):")
     for i, c in enumerate(PREDEFINED_CITIES, start=1):
@@ -727,7 +727,6 @@ def add_traveller(username):
     mobile = input_and_validate("Enter 8-digit mobile (DDDDDDDD): ", validate_phone_number)
     driving_license = input_and_validate("Enter driving license (XXDDDDDDD or XDDDDDDDD): ", validate_driving_license)
 
-    #  Unique customer_id (YY + 8 random + checksum)
     current_date = str(datetime.datetime.now().year)
     customer_id = current_date[-2:]
     checksum = sum(int(d) for d in customer_id)
@@ -738,7 +737,6 @@ def add_traveller(username):
     checksum %= 10
     customer_id += str(checksum)
 
-    # Prepare and validate fields using centralized helper which handles encryption
     data = (
         customer_id,
         database.validate_and_prepare_value('Travellers', 'first_name', first_name),
@@ -782,7 +780,7 @@ def input_and_validate(prompt, validate_func, default_value=""):
 def search_people(role, username):
     um_members.clear()
     search_term = prompt_with_back("Enter search term: ")
-    # If user pressed Enter or 'b', treat as no results / cancel
+
     if search_term is None:
         um_members.clear()
         if role == "traveller":
@@ -829,7 +827,7 @@ def show_travellers(travellers, username, from_modify=False):
         print("No travellers found")
         time.sleep(2)
         return None
-    # Use centralized UI helper to normalize back/enter handling and clearing
+
     from ui_helpers import prompt_with_back, clear as ui_clear
 
     current = 0
@@ -847,7 +845,6 @@ def show_travellers(travellers, username, from_modify=False):
             print("\nEnter the pagenumber of the traveller (or N/P for another): ")
 
         choice = prompt_with_back("Choose an option: ")
-        # prompt_with_back returns None when user pressed Enter or 'b'
         if choice is None:
             return None
         choice = choice.lower()

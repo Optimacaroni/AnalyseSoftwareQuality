@@ -2,12 +2,11 @@ import sqlite3
 import time
 import bcrypt
 from getpass import getpass
-from safe_data import *
-from validation import *
+from safe_data import private_key, decrypt_data
+from validation import validate_username, validate_password, validate_first_name, validate_last_name
 import um_members
 import database
 
-# logging.
 from log_config import logmanager as log_manager
 log_instance = log_manager()
 
@@ -16,7 +15,6 @@ def create_account(role):
         um_members.clear()
         print("\n--- Create Account ---")
 
-        # username (case-insensitive uniqueness)
         while True:
             um_members.clear()
             userName = input("Enter a username: ").strip()
@@ -45,7 +43,7 @@ def create_account(role):
             connection.close()
             break
 
-        # password
+
         while True:
             um_members.clear()
             password = getpass("Enter a password: ")
@@ -56,7 +54,7 @@ def create_account(role):
                 time.sleep(2)
                 log_instance.log_activity("", "Create account failed", "Invalid password", "No")
 
-        # first name
+
         while True:
             um_members.clear()
             firstName = input("Enter your first name: ").strip()
@@ -66,7 +64,7 @@ def create_account(role):
             time.sleep(2)
             log_instance.log_activity("", "Create account failed", "Invalid first name", "No")
 
-        # last name
+
         while True:
             um_members.clear()
             lastName = input("Enter your last name: ").strip()
@@ -85,7 +83,6 @@ def create_account(role):
 
         hashedPassword = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
 
-        # store normalized username using centralized helper (handles encryption)
         enc_username = database.validate_and_prepare_value('Users', 'username', normalized)
         enc_firstName = database.validate_and_prepare_value('Users', 'first_name', firstName)
         enc_lastName = database.validate_and_prepare_value('Users', 'last_name', lastName)

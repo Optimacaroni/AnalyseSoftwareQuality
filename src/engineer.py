@@ -3,31 +3,19 @@ from getpass import getpass
 import bcrypt
 import um_members
 import time
-from safe_data import *
-from super_admin import *
-# logging
+from safe_data import decrypt_data, private_key
+from validation import validate_password
+from super_admin import scooter_menu
 from log_config import logmanager as log_manager
 log_instance = log_manager()
 
 def menu(username):
-    um_members.clear()
-    connection = sqlite3.connect("scooterfleet.db")
-    cursor = connection.cursor()
-
-    cursor.execute("SELECT username, password FROM Users")
-    user_rows = cursor.fetchall()
-    user_data = None
-    for row in user_rows:
-        if decrypt_data(private_key(), row[0]) == username:
-            user_data = row
-            break
-
     while True:
         um_members.clear()
         print("\n--- Service Engineer Menu ---")
         print(f"--Welcome {username}--\n")
         print("1. Update password")
-        print("2. Scooters menu")
+        print("2. Scooter menu")
         print("3. Logout")
         choice = input("Choose an option (1/2/3): ").strip()
 
@@ -63,7 +51,7 @@ def update_password(username):
             print("User not found")
             log_instance.log_activity(username, "Update password", "Nonexistent service engineer tried to update password", "Yes")
             exit()
-            
+
     input_password = getpass("Enter your current password: ")
     if not bcrypt.checkpw(input_password.encode('utf-8'), found_password):
         log_instance.log_activity(username, "Update password", "Incorrect password", "No")

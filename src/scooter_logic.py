@@ -1,7 +1,6 @@
 import sqlite3
 import time
-from safe_data import *
-from validation import *
+from safe_data import encrypt_data, public_key
 from log_config import logmanager as log_manager
 from search import display_search_results, search
 import database
@@ -54,7 +53,6 @@ def add_scooter(username):
     mileage = _prompt("Mileage (km): ", lambda x: float(x) >= 0, transform=float)
     last_maintenance = _prompt("Last maintenance date (YYYY-MM-DD): ", lambda x: __import__('datetime').datetime.strptime(x, "%Y-%m-%d"), transform=str)
 
-    # Prepare fields using centralized validation/prepare helper
     data = (
         database.validate_and_prepare_value('Scooters', 'brand', brand),
         database.validate_and_prepare_value('Scooters', 'model', model),
@@ -107,7 +105,6 @@ def modify_scooter(username, role):
     selected = results[choice]
     scooter_id = selected[0]
 
-    # Determine editable fields
     all_fields = {
         "1": ("brand", lambda v: 1 <= len(v) <= 50),
         "2": ("model", lambda v: 1 <= len(v) <= 50),
@@ -124,7 +121,6 @@ def modify_scooter(username, role):
         "13": ("last_maintenance_date", lambda v: __import__('datetime').datetime.strptime(v, "%Y-%m-%d"))
     }
 
-    # Service engineers are restricted: allow only fields 6-13
     if role == "service_engineer":
         editable_keys = [str(i) for i in range(6, 14)]
     else:
@@ -143,7 +139,6 @@ def modify_scooter(username, role):
 
     field_name, validator = all_fields[sel]
     new_value = input(f"Enter new value for {field_name}: ").strip()
-    # Validate
     try:
         if not validator(new_value):
             print("Invalid value")
@@ -153,7 +148,6 @@ def modify_scooter(username, role):
         return
 
     enc = _encrypt(str(new_value) if sel != "13" else new_value)
-    # Use centralized safe updater to validate identifiers and run parameterized SQL
     try:
         ok = database.update_column('Scooters', field_name, 'scooter_id', scooter_id, enc)
         if not ok:

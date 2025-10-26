@@ -7,15 +7,14 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.fernet import Fernet
 
 # Files
-KEY_PATH = 'um.key'    # legacy key file (kept for backward compatibility)
-SALT_PATH = 'um.salt'  # salt file used for passphrase-derived key
+KEY_PATH = 'um.key'    
+SALT_PATH = 'um.salt'  
 
 # Internal cache
 _cached_key = None
 
 
 def _derive_key_from_passphrase(passphrase: str, salt: bytes) -> bytes:
-    # Use PBKDF2 to derive a 32-byte key then urlsafe_b64 encode for Fernet
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=32,
@@ -38,7 +37,6 @@ def _load_or_create_salt():
     if os.path.exists(SALT_PATH):
         with open(SALT_PATH, 'rb') as f:
             return f.read()
-    # create a new salt and store it (not secret)
     salt = os.urandom(16)
     with open(SALT_PATH, 'wb') as f:
         f.write(salt)
@@ -46,40 +44,37 @@ def _load_or_create_salt():
 
 
 def _get_key():
-    """Return a Fernet-compatible base64 key (bytes).
-
-    Behaviour:
-    - If a salt file exists, derive the key from a passphrase (env UM_PASSPHRASE or prompt).
-    - Else if legacy um.key file exists, use it for backward compatibility (warning).
-    - Else prompt for a passphrase, create salt file and derive key.
-    """
     global _cached_key
     if _cached_key is not None:
         return _cached_key
 
-    # If salt exists, use passphrase-derived key
     if os.path.exists(SALT_PATH):
         salt = _load_or_create_salt()
         passphrase = os.environ.get('UM_PASSPHRASE')
         if not passphrase:
-            # prompt the user for passphrase when first needed
             passphrase = getpass('Enter passphrase for data encryption/decryption: ')
         _cached_key = _derive_key_from_passphrase(passphrase, salt)
         return _cached_key
 
-    # No salt file: check for legacy key file
     legacy = _load_legacy_keyfile()
     if legacy:
-        # Use legacy key to preserve ability to read existing DB/logs
-        # Warn the user that this key file is insecure and recommend migration
-        try:
-            print('Warning: using legacy key file (um.key). For better security, migrate to passphrase-derived key.')
-        except Exception:
-            pass
-        _cached_key = legacy
-        return _cached_key
+        allow_legacy = os.environ.get('ALLOW_LEGACY_KEY', '')
+        if allow_legacy.lower() in ('1', 'true', 'yes'):
+            try:
+                print('WARNING: using legacy key file (um.key) because ALLOW_LEGACY_KEY is set. This is insecure; migrate to a passphrase-derived key ASAP.')
+            except Exception:
+                pass
+            _cached_key = legacy
+            return _cached_key
+        raise RuntimeError(
+            "Legacy key file 'um.key' found but not allowed.\n"
+            "For security we require a passphrase-derived key.\n"
+            "Options:\n"
+            "  1) Set UM_PASSPHRASE to an encryption passphrase and restart (recommended).\n"
+            "  2) To perform a one-time migration or allow legacy behavior temporarily, set ALLOW_LEGACY_KEY=1 (NOT RECOMMENDED).\n"
+            "If you have backed up the original key file, move it out of the repository and follow the migration steps in MIGRATE.md.\n"
+        )
 
-    # No legacy keyfile either: create salt and derive from passphrase
     salt = _load_or_create_salt()
     passphrase = os.environ.get('UM_PASSPHRASE')
     if not passphrase:
@@ -88,7 +83,6 @@ def _get_key():
     return _cached_key
 
 
-# Backwards-compatible API names
 def private_key():
     return _get_key()
 
@@ -98,7 +92,6 @@ def public_key():
 
 
 def encrypt_data(key, data):
-    # Accept str/int/float, store bytes
     if not isinstance(data, str):
         data = str(data)
     f = Fernet(key)

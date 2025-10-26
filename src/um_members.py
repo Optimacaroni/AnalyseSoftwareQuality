@@ -1,28 +1,18 @@
-# Accountlevels
 import engineer
 import admin
-# Hard-coded super admin credentials (avoid importing super_admin to prevent circular import)
-super_username = "super_admin"
-super_password = "Admin_123?"
 
-# database
 import sqlite3
 import database
 
-# cryptography and hashing
 import bcrypt
 from getpass import getpass
-from safe_data import *
+from safe_data import private_key, decrypt_data
 
-# logging
 from log_config import logmanager as log_manager
 log_instance = log_manager()
 
-from search import *
-
-from os import system, name
 import time
-from ui_helpers import prompt_with_back, clear as ui_clear
+from ui_helpers import clear as ui_clear
 from validation import validate_password
 
 
@@ -103,7 +93,6 @@ def Login():
                     log_instance.log_activity(decrypted_username, "Login failed", "Entered invalid password", "No")
         elif username_input == super_username and password_input == super_password:
             log_instance.log_activity(super_username, "Login successful", "Super admin logged in", "No")
-            # import here to avoid circular import at module level
             import super_admin
             super_admin.menu()
             break
@@ -121,10 +110,7 @@ def Login():
 
 
 def clear():
-    if name == 'nt':
-        _ = system('cls')
-    else:
-        _ = system('clear')
+    ui_clear()
 
 
 def password_recovery_menu():
@@ -150,10 +136,8 @@ def request_recovery_token():
     ui_clear()
     print("\n--- Request Recovery Token ---")
     username = input("Enter your username: ").strip().lower()
-    # create token (if user exists). We avoid disclosing existence: always display same message.
     token = database.create_recovery_token_for_username(username)
     if token:
-        # In a real system we'd email the token. For this app we display it and log the event.
         print("If the account exists, a recovery token has been generated and will expire in 15 minutes.")
         print("Recovery token (showing because email not configured):", token)
         log_instance.log_activity(username, "Password recovery requested", "Recovery token generated", "No")
@@ -168,7 +152,6 @@ def reset_password_with_token():
     print("\n--- Reset Password Using Token ---")
     username = input("Enter your username: ").strip().lower()
     token = input("Enter recovery token: ").strip()
-    # verify token
     if not database.verify_and_consume_recovery_token(username, token):
         ui_clear()
         print("Invalid or expired token.")
@@ -176,7 +159,6 @@ def reset_password_with_token():
         time.sleep(2)
         return
 
-    # token valid; prompt for new password
     while True:
         new_password = getpass("Enter your new password: ")
         if not validate_password(new_password):
@@ -190,13 +172,12 @@ def reset_password_with_token():
             continue
         break
 
-    # find encrypted username to update
     conn = sqlite3.connect("scooterfleet.db")
     cur = conn.cursor()
     cur.execute("SELECT id, username FROM Users")
     rows = cur.fetchall()
     target_enc = None
-    for rid, enc_uname in rows:
+    for _rid, enc_uname in rows:
         try:
             if decrypt_data(private_key(), enc_uname).lower() == username:
                 target_enc = enc_uname

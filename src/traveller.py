@@ -1,7 +1,4 @@
 def ShowData(tr):
-    # Travellers: [customer_id, first_name, last_name, birthday, gender,
-    #              street_name, house_number, zip_code, city, email, mobile_phone,
-    #              driving_license_number, registration_date]
     print(f"> Name:         {tr[1]} {tr[2]}")
     print(f"> Customer ID:  {tr[0]}")
     print(f"> Birthday:     {tr[3]}")

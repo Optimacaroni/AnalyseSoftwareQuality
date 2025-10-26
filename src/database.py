@@ -2,7 +2,7 @@ import sqlite3
 
 Roles = ('system_admin', 'service_engineer')
 Genders = ('Male', 'Female')
-Cities = ('Rotterdam', 'Delft', 'Amsterdam', 'Groningen', 'Arnhem', 'Zwolle', 'Eindhoven', 'Den Haag', 'Utrecht', 'Maastricht')
+Cities = ('Rotterdam', 'Schiedam', 'Vlaardingen', 'Capelle aan den IJssel', 'Barendrecht', 'Ridderkerk', 'Spijkenisse', 'Maassluis', 'Krimpen aan den IJssel', 'Dordrecht')
 
 def create_or_connect_db():
     connection = sqlite3.connect("scooterfleet.db")
@@ -64,7 +64,6 @@ def create_or_connect_db():
         FOREIGN KEY (admin_user_id) REFERENCES Users(id)
     )""")
 
-    # Password recovery tokens table
     cursor.execute("""CREATE TABLE IF NOT EXISTS PasswordRecoveryTokens (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER NOT NULL,
@@ -82,6 +81,7 @@ def clear_database():
     connection = sqlite3.connect("scooterfleet.db")
     cursor = connection.cursor()
 
+    cursor.execute("DROP TABLE IF EXISTS PasswordRecoveryTokens")
     cursor.execute("DROP TABLE IF EXISTS RestoreCodes")
     cursor.execute("DROP TABLE IF EXISTS Scooters")
     cursor.execute("DROP TABLE IF EXISTS Travellers")
@@ -91,7 +91,6 @@ def clear_database():
     connection.close()
 
 
-# Schema whitelist for other modules to use (columns -> whether encrypted)
 ALLOWED_COLUMNS = {
     "Users": {
         "username": True,
@@ -130,7 +129,6 @@ ALLOWED_COLUMNS = {
     }
 }
 
-# Type hints for non-encrypted columns to coerce/validate values
 TYPE_MAP = {
     "Scooters": {
         "top_speed": float,
@@ -182,7 +180,6 @@ def validate_and_prepare_value(table: str, column: str, new_data):
     # If column is encrypted, ensure it's a string and encrypt
     encrypt_flag = ALLOWED_COLUMNS[table][column]
     if encrypt_flag:
-        # Accept ints/floats by converting to str first
         if not isinstance(new_data, str):
             new_data = str(new_data)
         try:
@@ -190,7 +187,6 @@ def validate_and_prepare_value(table: str, column: str, new_data):
         except Exception as e:
             raise ValueError(f"Encryption failed: {e}")
 
-    # Non-encrypted: coerce based on TYPE_MAP if present
     if table in TYPE_MAP and column in TYPE_MAP[table]:
         expected = TYPE_MAP[table][column]
         if expected == "date":
@@ -213,7 +209,6 @@ def validate_and_prepare_value(table: str, column: str, new_data):
         else:
             return str(new_data)
 
-    # Default fallback: store as string
     return str(new_data)
 
 
@@ -230,7 +225,6 @@ def update_column(table: str, column: str, id_field: str, id_value, prepared_val
     if column not in ALLOWED_COLUMNS[table]:
         raise ValueError("Invalid column specified for update")
 
-    # basic identifier check for id_field
     if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', id_field):
         raise ValueError("Invalid id field identifier")
 
@@ -251,7 +245,6 @@ def create_recovery_token_for_username(decrypted_username: str, validity_minutes
     """
     conn = sqlite3.connect("scooterfleet.db")
     cur = conn.cursor()
-    # Find user id by decrypting usernames in the Users table
     cur.execute("SELECT id, username FROM Users")
     rows = cur.fetchall()
     target_id = None
@@ -267,7 +260,6 @@ def create_recovery_token_for_username(decrypted_username: str, validity_minutes
         conn.close()
         return None
 
-    # generate token and store its hash
     token = secrets.token_urlsafe(24)
     token_hash = hashlib.sha256(token.encode('utf-8')).hexdigest()
     expires_at = (datetime.datetime.utcnow() + datetime.timedelta(minutes=validity_minutes)).isoformat()
@@ -285,7 +277,6 @@ def verify_and_consume_recovery_token(decrypted_username: str, token: str) -> bo
     """
     conn = sqlite3.connect("scooterfleet.db")
     cur = conn.cursor()
-    # find user id
     cur.execute("SELECT id, username FROM Users")
     rows = cur.fetchall()
     target_id = None

@@ -71,7 +71,7 @@ def menu(username):
             time.sleep(2)
 
 # Functions
-def update_password(username): # TODO: Add validation
+def update_password(username):
     connection = sqlite3.connect("scooterfleet.db")
     cursor = connection.cursor()
 
@@ -104,16 +104,25 @@ def update_password(username): # TODO: Add validation
             um_members.clear()
             print("\n--- Update Password ---")
             new_password = getpass("Enter your new password: ")
-            if (new_password == input_password):
+            # Additional validation: must not equal old password and must meet complexity rules
+            if new_password == input_password:
                 um_members.clear()
-                print("Invalid password")
+                print("New password must be different from the old password.")
                 log_instance.log_activity(username, "Update password", "Entered same password as the old password", "No")
                 time.sleep(2)
                 continue
-            elif (not validate_password(new_password)):
+            if not validate_password(new_password):
                 um_members.clear()
-                print("Invalid password")
-                log_instance.log_activity(username, "Update password", "Invalid password", "No")
+                print("Password does not meet complexity requirements.")
+                log_instance.log_activity(username, "Update password", "Invalid new password (complexity)", "No")
+                time.sleep(2)
+                continue
+            # Confirm password to avoid typos
+            confirm_password = getpass("Confirm new password: ")
+            if confirm_password != new_password:
+                um_members.clear()
+                print("Passwords do not match. Please try again.")
+                log_instance.log_activity(username, "Update password", "Password confirmation mismatch", "No")
                 time.sleep(2)
                 continue
             else:

@@ -118,7 +118,14 @@ class logmanager:
                     print("1. Next page")
                     print("2. Previous page")
                     print("3. Go back")
-                    choice = input("Choose an option (1/2/3): ").strip().lower()
+                    # avoid circular import at module level; import ui_helpers here
+                    from ui_helpers import prompt_with_back, clear as ui_clear
+
+                    choice = prompt_with_back("Choose an option (1/2/3): ")
+                    # prompt_with_back returns None for Enter or 'b' -> treat as go back
+                    if choice is None:
+                        logmanager.unread_suspicious_count = 0
+                        break
 
                     if choice == "1":
                         if page < pages - 1:
@@ -130,6 +137,7 @@ class logmanager:
                         logmanager.unread_suspicious_count = 0
                         break
                     else:
+                        ui_clear()
                         print("Invalid input")
                     
         except FileNotFoundError:

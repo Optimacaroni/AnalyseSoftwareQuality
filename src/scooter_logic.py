@@ -5,6 +5,8 @@ from validation import *
 from log_config import logmanager as log_manager
 from search import display_search_results, search
 import database
+from acl import require_role
+from ui_helpers import clear as ui_clear, prompt_with_back
 
 log_instance = log_manager()
 
@@ -32,6 +34,7 @@ def _prompt(prompt, validator=None, transform=None, allow_empty=False):
             print("Invalid input")
 
 
+@require_role('system_admin')
 def add_scooter(username):
     connection = sqlite3.connect("scooterfleet.db")
     cursor = connection.cursor()
@@ -85,6 +88,7 @@ def add_scooter(username):
     time.sleep(1)
 
 
+@require_role('service_engineer')
 def modify_scooter(username, role):
     print("\n--- Modify Scooter ---")
     term = input("Enter search term: ").strip()
@@ -93,16 +97,11 @@ def modify_scooter(username, role):
         print("No scooters found")
         time.sleep(1)
         return
-    display_search_results(results, show_numbers=True)
-    choice = input("Enter the number of the scooter to modify (or 0 to cancel): ").strip()
-    try:
-        choice = int(choice)
-    except ValueError:
-        print("Invalid input")
-        return
-    if choice == 0:
+    choice = display_search_results(results, show_numbers=True, allow_select=True)
+    if choice is None:
         return
     if choice < 1 or choice > len(results)-1:
+        ui_clear()
         print("Invalid choice")
         return
     selected = results[choice]
@@ -134,10 +133,11 @@ def modify_scooter(username, role):
     print("Choose field to modify:")
     for k in editable_keys:
         print(f"{k}. {all_fields[k][0]}")
-    sel = input("Field number (or 0 to cancel): ").strip()
-    if sel == "0":
+    sel = prompt_with_back("Field number: ")
+    if sel is None:
         return
     if sel not in editable_keys:
+        ui_clear()
         print("Invalid choice")
         return
 
@@ -153,16 +153,21 @@ def modify_scooter(username, role):
         return
 
     enc = _encrypt(str(new_value) if sel != "13" else new_value)
-    connection = sqlite3.connect("scooterfleet.db")
-    cursor = connection.cursor()
-    cursor.execute(f"UPDATE Scooters SET {field_name} = ? WHERE scooter_id = ?", (enc, scooter_id))
-    connection.commit()
-    connection.close()
+    # Use centralized safe updater to validate identifiers and run parameterized SQL
+    try:
+        ok = database.update_column('Scooters', field_name, 'scooter_id', scooter_id, enc)
+        if not ok:
+            print("No rows updated")
+            return
+    except Exception as e:
+        print(f"Update failed: {e}")
+        return
     print("Scooter updated successfully")
     log_instance.log_activity(username, "Modify scooter", f"Updated {field_name} of scooter id: {scooter_id}", "No")
     time.sleep(1)
 
 
+@require_role('system_admin')
 def delete_scooter(username):
     print("\n--- Delete Scooter ---")
     term = input("Enter search term: ").strip()
@@ -171,16 +176,11 @@ def delete_scooter(username):
         print("No scooters found")
         time.sleep(1)
         return
-    display_search_results(results, show_numbers=True)
-    choice = input("Enter the number of the scooter to delete (or 0 to cancel): ").strip()
-    try:
-        choice = int(choice)
-    except ValueError:
-        print("Invalid input")
-        return
-    if choice == 0:
+    choice = display_search_results(results, show_numbers=True, allow_select=True)
+    if choice is None:
         return
     if choice < 1 or choice > len(results)-1:
+        ui_clear()
         print("Invalid choice")
         return
     selected = results[choice]

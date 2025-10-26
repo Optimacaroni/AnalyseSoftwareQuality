@@ -21,6 +21,11 @@ from safe_data import *
 # search
 from search import *
 
+# centralized ACL
+from acl import require_role
+
+from ui_helpers import prompt_with_back, clear as ui_clear
+
 import time
 import datetime
 import random
@@ -98,48 +103,17 @@ def list_users(_username, role_filter=None):
     for id, username, role in user_data:
         decrypted_username = decrypt_data(private_key(), username)
         decrypted_user_data.append((id, decrypted_username, role))
+    # Reuse the paginated display used by search results so layout is consistent across lists
+    search_results = []
+    search_results.append(["ID", "USERNAME", "ROLE"])
+    for id, uname, role in decrypted_user_data:
+        search_results.append([id, uname, role])
 
-    page = 0
-    rows_per_page = 10
-    total_pages = (len(decrypted_user_data) + rows_per_page - 1) // rows_per_page
-    while True:
-        um_members.clear()
-        print("\n--- List of users ---")
-        start_row = page * rows_per_page
-        end_row = start_row + rows_per_page
-        
-        print(f"{'ID':<5}{'Username':<25}{'Role':<18}")
-        print("-" * 48)
-        for id, username, role in decrypted_user_data[start_row:end_row]:
-            print(f"{id:<5}{username:<25}{role:<18}")
-
-        print(f"\n--- page {page + 1} / {total_pages} ---")
-        print("1. Next page")
-        print("2. Previous page")
-        print("3. Go back")
-        choice = input("Choose an option (1/2/3): ").strip().lower()
-        if choice == "1":
-            if page == total_pages - 1:
-                print("You have reached the last page")
-                time.sleep(2)
-                continue
-            else:
-                page += 1
-        elif choice == "2":
-            if page == 0:
-                print("You are already at the first page")
-                time.sleep(2)
-                continue
-            else:
-                page -= 1
-        elif choice == "3":
-            um_members.clear()
-            break
-        else:
-            print("Invalid input")
-            log_instance.log_activity(_username, "List of users", "Invalid input in the list of users", "No")
-            continue
-    
+    um_members.clear()
+    print("\n--- List of users ---")
+    # show_numbers=False because this is a pure listing (no selection expected)
+    display_search_results(search_results, show_numbers=False)
+    input("Press Enter to return...")
     connection.close()
 
 def service_engineer_menu(username):
@@ -383,20 +357,18 @@ def modify_data(datatype_to_update, table_to_update, id_to_update, new_data) -> 
     else:
         id_field = "scooter_id"
 
-    connection = sqlite3.connect("scooterfleet.db")
-    cursor = connection.cursor()
-
-    sql = f"UPDATE {table_to_update} SET {datatype_to_update} = ? WHERE {id_field} = ?"
-    cursor.execute(sql, (value, id_to_update))
-    connection.commit()
-
-    if cursor.rowcount == 0:
-        print(f"No rows found with id {id_to_update}.")
+    try:
+        ok = database.update_column(table_to_update, datatype_to_update, id_field, id_to_update, value)
+    except Exception as e:
+        print(f"Update failed: {e}")
         time.sleep(2)
-        connection.close()
         return False
 
-    connection.close()
+    if not ok:
+        print(f"No rows found with id {id_to_update}.")
+        time.sleep(2)
+        return False
+
     return True
 
 def modify_user(role, username):
@@ -405,32 +377,34 @@ def modify_user(role, username):
         print("\n--- Update ---")
     
         if role in ["system_admin", "service_engineer"]:
-            search_term = input("Enter search term (or 0 to go back): ").strip()
-            if search_term == "0":
+            search_term = prompt_with_back("Enter search term: ")
+            # Enter or 'b' cancels/back
+            if search_term is None:
                 break
             search_results = search(search_term, "Users", role=role)
-            display_search_results(search_results, show_numbers=True)
-            try:
-                choice = int(input("\nEnter the number of the result you want to choose (or 0 to cancel): "))
-                if choice == 0:
-                    print("Operation canceled.")
-                    break
-                elif 1 <= choice <= len(search_results)-1:
-                    selected_result = search_results[choice]
-                    um_members.clear()
-                    print(f"Selected user: {selected_result[1]}")
-                else:
-                    print("Invalid choice. Please select a valid number.")
-                    continue
-            except ValueError:
-                print("Please enter a number.")
+            choice = display_search_results(search_results, show_numbers=True, allow_select=True)
+            if choice is None:
+                print("Operation canceled.")
+                break
+            if 1 <= choice <= len(search_results) - 1:
+                selected_result = search_results[choice]
+                um_members.clear()
+            else:
+                um_members.clear()
+                print("Invalid choice. Please select a valid number.")
+                time.sleep(2)
                 continue
             
             while True:
+                print(f"Selected user: {selected_result[1]}")
                 print("\n 1. Username")
                 print(" 2. First name")
                 print(" 3. Last name")
-                choice = input("\nChoose the field you want to change (1/2/3): ")
+                choice = prompt_with_back("\nChoose the field you want to change (1/2/3) (press Enter to go back): ")
+                # prompt_with_back returns None for Enter or 'b'
+                if choice is None:
+                    ui_clear()
+                    break
                 if choice == "1":
                     new_data = input("Enter new username: ").strip().lower()
                     if validate_username(new_data):
@@ -441,11 +415,12 @@ def modify_user(role, username):
                             break
                         else:
                             print("Username not updated")
-                            break
+                            continue
                     else:
                         print("Invalid input")
                         time.sleep(2)
-                        break
+                        um_members.clear()
+                        continue
                 elif choice == "2":
                     new_first_name = input("Enter new first name: ").strip()
                     if validate_first_name(new_first_name):
@@ -456,11 +431,12 @@ def modify_user(role, username):
                             break
                         else:
                             print("First name not updated")
-                            break 
+                            continue 
                     else:
                         print("Invalid input")
                         time.sleep(2)
-                        break
+                        um_members.clear()
+                        continue
                 elif choice == "3":
                     new_data = input("Enter new last name: ").strip()
                     if validate_last_name(new_data):
@@ -471,19 +447,22 @@ def modify_user(role, username):
                             break
                         else:
                             print("Last name not updated")
-                            break
+                            continue
                     else:
                         print("Invalid input")
                         time.sleep(2)
-                        break
+                        um_members.clear()
+                        continue
                 else:
                     print("Invalid input")
                     time.sleep(2)
+                    um_members.clear()
                     continue
         
         elif role == "traveller":
-            search_term = input("Enter search term (or 0 to go back): ").strip()
-            if search_term == "0":
+            search_term = prompt_with_back("Enter search term: ")
+            # Enter or 'b' cancels/back
+            if search_term is None:
                 break
             search_results = search(search_term, "Travellers")
             if (len(search_results) == 0):
@@ -508,9 +487,11 @@ def modify_user(role, username):
                     print(" 9. Email")
                     print("10. Mobile phone")
                     print("11. Driving license number")
-                    choice = input("Choose field to change (1-11 or 'b' to go back): ").strip().lower()
-                    if choice == "b":
+                    choice = prompt_with_back("Choose field to change (1-11 or 'b' to go back) (press Enter to go back): ")
+                    if choice is None:
+                        ui_clear()
                         break
+                    choice = choice.lower()
                     field_map = {
                         "1": ("first_name", validate_first_name),
                         "2": ("last_name", validate_last_name),
@@ -527,17 +508,20 @@ def modify_user(role, username):
                     if choice not in field_map:
                         print("Invalid input")
                         time.sleep(2)
+                        um_members.clear()
                         continue
                     field, validator = field_map[choice]
                     new_data = input("Enter new value: ").strip()
                     if field == "mobile_phone":
                         if not validator(new_data):
                             print("Invalid input")
-                            time.sleep(2); continue
+                            time.sleep(2)
+                            um_members.clear(); continue
                         new_data = "+31-6-" + new_data
                     elif not validator(new_data):
                         print("Invalid input")
-                        time.sleep(2); continue
+                        time.sleep(2)
+                        um_members.clear(); continue
                     if modify_data(field, "Travellers", traveller_to_update, new_data):
                         um_members.clear()
                         print("Traveller updated successfully")
@@ -552,53 +536,83 @@ def modify_user(role, username):
             log_instance.log_activity(username, "Modify user", "Invalid input in the modify user menu", "No")
             time.sleep(2)
 
+@require_role('system_admin')
 def delete_user(role, username):
     connection = sqlite3.connect("scooterfleet.db")
     cursor = connection.cursor()
 
     while True:
         print(f"\n--- Delete {role} ---")
-        search_results = search_people(role, username)
-
-        if not search_results:
-            print(f"No {role}s found")
+        # Handle travellers using a numbered selection flow similar to delete_scooter
+        if role == "traveller":
+            term = prompt_with_back("Enter search term: ")
+            # Enter or 'b' cancels/back
+            if term is None:
+                break
+            results = search(term, "Travellers")
+            if not results:
+                print("No travellers found")
+                time.sleep(2)
+                break
+            display_search_results(results, show_numbers=True)
+            choice_input = prompt_with_back("Enter the number of the traveller to delete: ")
+            if choice_input is None:
+                break
+            try:
+                choice = int(choice_input.strip())
+            except ValueError:
+                ui_clear()
+                print("Invalid input")
+                time.sleep(2)
+                break
+            if choice < 1 or choice > len(results)-1:
+                print("Invalid choice")
+                time.sleep(2)
+                break
+            selected = results[choice]
+            cust_id = selected[0]
+            # Try to decrypt some identifying fields for clarity
+            try:
+                first = decrypt_data(private_key(), selected[1]) if isinstance(selected[1], (bytes, bytearray)) else selected[1]
+            except Exception:
+                first = selected[1]
+            try:
+                last = decrypt_data(private_key(), selected[2]) if isinstance(selected[2], (bytes, bytearray)) else selected[2]
+            except Exception:
+                last = selected[2]
+            print(f"Selected traveller: {cust_id} - {first} {last}")
+            confirm = input(f"Are you sure you want to delete traveller {cust_id}? (y/n): ").strip().lower()
+            if confirm not in ("y", "yes"):
+                print("Delete cancelled")
+                time.sleep(1)
+                break
+            cursor.execute("DELETE FROM Travellers WHERE customer_id = ?", (cust_id,))
+            connection.commit()
+            print(f"{role.capitalize()} deleted successfully")
+            log_instance.log_activity(username, "Delete traveller", f"Deleted traveller with id: {cust_id}", "No")
             time.sleep(2)
             break
 
-        if role == "traveller":
-            choice_two = input(f"Are you sure you want to remove this {role}? (y/n) ").strip().lower()
-            if choice_two in ["n", "no"]:
-                break
-            elif choice_two in ["y", "yes"]:
-                # search_people returns the customer_id (string) or None
-                cust_id = search_results
-                if cust_id is None:
-                    print("No traveller selected; aborting.")
-                    time.sleep(2)
-                    break
-                # Ensure parameter is a single-element tuple
-                cursor.execute("DELETE FROM Travellers WHERE customer_id = ?", (cust_id,))
-                connection.commit()
-                print(f"{role.capitalize()} deleted successfully")
-                log_instance.log_activity(username, "Delete traveller", f"Deleted traveller with id: {cust_id}", "No")
-                time.sleep(2)
-                break
-            else:
-                print("Invalid input. Action cancelled.")
-                log_instance.log_activity(username, "Delete traveller", "Invalid input for delete traveller", "No")
-                time.sleep(2)
+        # Non-traveller flows (users/admins) - use existing search_people for consistency
         else:
-            display_search_results(search_results, show_numbers=True)
-            choice = input("Enter the number of the user you want to delete (or 0 to cancel): ").strip()
-            if choice == "0":
+            search_results = search_people(role, username)
+
+            if not search_results:
+                print(f"No {role}s found")
+                time.sleep(2)
+                break
+
+            choice = display_search_results(search_results, show_numbers=True, allow_select=True)
+            if choice is None:
                 break
             try:
-                choice = int(choice)
                 if choice < 1 or choice > len(search_results)-1:
+                    um_members.clear()
                     print("Invalid choice. Please select a valid number.")
                     time.sleep(2)
                     continue
-            except ValueError:
+            except Exception:
+                um_members.clear()
                 print("Please enter a valid number.")
                 time.sleep(2)
                 continue
@@ -640,8 +654,8 @@ def reset_pw(role, username):
         if role in ["system_admin", "service_engineer"]:
             display_search_results(search_results, show_numbers=False)
 
-        pw_to_reset = input(f"\nEnter the id of the {role} for the password you want to reset (or 0 to go back): ").strip()
-        if pw_to_reset == "0":
+        pw_to_reset = prompt_with_back(f"\nEnter the id of the {role} for the password you want to reset: ")
+        if pw_to_reset is None:
             break
         try:
             pw_to_reset = int(pw_to_reset)
@@ -651,6 +665,7 @@ def reset_pw(role, username):
                     selected_user = result
                     break
             if not selected_user:
+                um_members.clear()
                 print("Invalid choice. Please select a valid number.")
                 time.sleep(2)
                 continue
@@ -677,6 +692,7 @@ def reset_pw(role, username):
             time.sleep(2)
             break
 
+@require_role('system_admin')
 def add_traveller(username):
     connection = sqlite3.connect("scooterfleet.db")
     cursor = connection.cursor()
@@ -689,10 +705,24 @@ def add_traveller(username):
     last_name = input_and_validate("Enter last name: ", validate_last_name)
     birthday = input_and_validate("Enter birthday (YYYY-MM-DD): ", validate_birthday)
     gender = input_and_validate("Enter gender (Male/Female): ", validate_gender)
+    um_members.clear()
     street = input_and_validate("Enter street: ", validate_street)
     house_number = input_and_validate("Enter house number: ", validate_house_number)
     zip_code = input_and_validate("Enter zip code (e.g., 1234AB): ", validate_postal_code)
-    city = input_and_validate("Enter city (from predefined list): ", validate_city)
+    # Show predefined cities and require selection by number only
+    from database import Cities as PREDEFINED_CITIES
+    print("Choose city from the list below (enter the number):")
+    for i, c in enumerate(PREDEFINED_CITIES, start=1):
+        print(f"{i}. {c}")
+    while True:
+        city_input = input("Enter city number: ").strip()
+        if city_input.isdigit():
+            idx = int(city_input)
+            if 1 <= idx <= len(PREDEFINED_CITIES):
+                city = PREDEFINED_CITIES[idx-1]
+                break
+        print("Invalid selection. Choose a number from the list.")
+    um_members.clear()
     email = input_and_validate("Enter email: ", validate_email)
     mobile = input_and_validate("Enter 8-digit mobile (DDDDDDDD): ", validate_phone_number)
     driving_license = input_and_validate("Enter driving license (XXDDDDDDD or XDDDDDDDD): ", validate_driving_license)
@@ -751,7 +781,20 @@ def input_and_validate(prompt, validate_func, default_value=""):
 
 def search_people(role, username):
     um_members.clear()
-    search_term = input("Enter search term: ").strip()
+    search_term = prompt_with_back("Enter search term: ")
+    # If user pressed Enter or 'b', treat as no results / cancel
+    if search_term is None:
+        um_members.clear()
+        if role == "traveller":
+            print("No travellers found")
+        elif role in ["system_admin", "service_engineer"]:
+            print(f"No {role}s found")
+        elif role == "scooter":
+            print("No scooters found")
+        else:
+            print("No results found")
+        time.sleep(2)
+        return None
     if role == "traveller":
         search_results = search(search_term, "Travellers")
         if not search_results:
@@ -786,10 +829,12 @@ def show_travellers(travellers, username, from_modify=False):
         print("No travellers found")
         time.sleep(2)
         return None
+    # Use centralized UI helper to normalize back/enter handling and clearing
+    from ui_helpers import prompt_with_back, clear as ui_clear
 
     current = 0
     while True:
-        um_members.clear()
+        ui_clear()
         print("\n--- Traveller Data ---")
         traveller.ShowData(travellers[current])
 
@@ -800,8 +845,12 @@ def show_travellers(travellers, username, from_modify=False):
 
         if from_modify:
             print("\nEnter the pagenumber of the traveller (or N/P for another): ")
-        
-        choice = input("Choose an option: ").strip().lower()
+
+        choice = prompt_with_back("Choose an option: ")
+        # prompt_with_back returns None when user pressed Enter or 'b'
+        if choice is None:
+            return None
+        choice = choice.lower()
         if choice == "n":
             if current == len(travellers) - 1:
                 print("You have reached the last page")
@@ -814,20 +863,18 @@ def show_travellers(travellers, username, from_modify=False):
                 time.sleep(2)
             else:
                 current -= 1
-        elif choice == "b":
-            return
         else:
             try:
                 idx = int(choice) - 1
                 if idx < 0 or idx >= len(travellers):
-                    um_members.clear()
+                    ui_clear()
                     print("Invalid input")
                     log_instance.log_activity(username, "Search traveller", "Invalid input in search traveller", "No")
                     time.sleep(2)
                     continue
                 return travellers[idx][0]
             except ValueError:
-                um_members.clear()
+                ui_clear()
                 print("Invalid input")
                 time.sleep(2)
                 return None

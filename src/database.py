@@ -2,7 +2,7 @@ import sqlite3
 
 Roles = ('system_admin', 'service_engineer')
 Genders = ('Male', 'Female')
-Cities = ('Rotterdam', 'Delft', 'Schiedam', 'Vlaardingen', 'Capelle', 'Schipluiden', 'Maassluis', 'Barendrecht', 'Ridderkerk', 'Spijkenisse')
+Cities = ('Rotterdam', 'Delft', 'Amsterdam', 'Groningen', 'Arnhem', 'Zwolle', 'Eindhoven', 'Den Haag', 'Utrecht', 'Maastricht')
 
 def create_or_connect_db():
     connection = sqlite3.connect("scooterfleet.db")
@@ -62,6 +62,17 @@ def create_or_connect_db():
         used INTEGER NOT NULL DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (admin_user_id) REFERENCES Users(id)
+    )""")
+
+    # Password recovery tokens table
+    cursor.execute("""CREATE TABLE IF NOT EXISTS PasswordRecoveryTokens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        token_hash TEXT NOT NULL,
+        expires_at TIMESTAMP NOT NULL,
+        used INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES Users(id)
     )""")
 
     connection.commit()
@@ -146,6 +157,10 @@ TYPE_MAP = {
 
 
 from safe_data import encrypt_data, public_key
+from safe_data import decrypt_data, private_key
+import secrets
+import hashlib
+import datetime
 
 
 def validate_and_prepare_value(table: str, column: str, new_data):
@@ -200,3 +215,103 @@ def validate_and_prepare_value(table: str, column: str, new_data):
 
     # Default fallback: store as string
     return str(new_data)
+
+
+def update_column(table: str, column: str, id_field: str, id_value, prepared_value) -> bool:
+    """Safely update a single column in a table after validating identifiers.
+
+    - Validates that table and column are in ALLOWED_COLUMNS.
+    - Validates id_field is a safe identifier (basic regex).
+    - Executes a parameterized UPDATE and returns True if rows were affected.
+    """
+    import re
+    if table not in ALLOWED_COLUMNS:
+        raise ValueError("Invalid table specified for update")
+    if column not in ALLOWED_COLUMNS[table]:
+        raise ValueError("Invalid column specified for update")
+
+    # basic identifier check for id_field
+    if not re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', id_field):
+        raise ValueError("Invalid id field identifier")
+
+    conn = sqlite3.connect("scooterfleet.db")
+    cur = conn.cursor()
+    sql = f"UPDATE {table} SET {column} = ? WHERE {id_field} = ?"
+    cur.execute(sql, (prepared_value, id_value))
+    conn.commit()
+    rowcount = cur.rowcount
+    conn.close()
+    return rowcount > 0
+
+
+def create_recovery_token_for_username(decrypted_username: str, validity_minutes: int = 15):
+    """Create a recovery token for a user identified by decrypted username.
+
+    Returns the plaintext token (to be delivered to the user) or None if user not found.
+    """
+    conn = sqlite3.connect("scooterfleet.db")
+    cur = conn.cursor()
+    # Find user id by decrypting usernames in the Users table
+    cur.execute("SELECT id, username FROM Users")
+    rows = cur.fetchall()
+    target_id = None
+    for rid, enc_uname in rows:
+        try:
+            if decrypt_data(private_key(), enc_uname).lower() == decrypted_username.lower():
+                target_id = rid
+                break
+        except Exception:
+            continue
+
+    if target_id is None:
+        conn.close()
+        return None
+
+    # generate token and store its hash
+    token = secrets.token_urlsafe(24)
+    token_hash = hashlib.sha256(token.encode('utf-8')).hexdigest()
+    expires_at = (datetime.datetime.utcnow() + datetime.timedelta(minutes=validity_minutes)).isoformat()
+
+    cur.execute("INSERT INTO PasswordRecoveryTokens (user_id, token_hash, expires_at, used) VALUES (?, ?, ?, 0)",
+                (target_id, token_hash, expires_at))
+    conn.commit()
+    conn.close()
+    return token
+
+
+def verify_and_consume_recovery_token(decrypted_username: str, token: str) -> bool:
+    """Verify a recovery token for the given decrypted username. If valid, mark it used and return True.
+    Otherwise return False.
+    """
+    conn = sqlite3.connect("scooterfleet.db")
+    cur = conn.cursor()
+    # find user id
+    cur.execute("SELECT id, username FROM Users")
+    rows = cur.fetchall()
+    target_id = None
+    for rid, enc_uname in rows:
+        try:
+            if decrypt_data(private_key(), enc_uname).lower() == decrypted_username.lower():
+                target_id = rid
+                break
+        except Exception:
+            continue
+
+    if target_id is None:
+        conn.close()
+        return False
+
+    token_hash = hashlib.sha256(token.encode('utf-8')).hexdigest()
+    now = datetime.datetime.utcnow().isoformat()
+    cur.execute("SELECT id FROM PasswordRecoveryTokens WHERE user_id = ? AND token_hash = ? AND used = 0 AND expires_at >= ?",
+                (target_id, token_hash, now))
+    row = cur.fetchone()
+    if not row:
+        conn.close()
+        return False
+
+    token_id = row[0]
+    cur.execute("UPDATE PasswordRecoveryTokens SET used = 1 WHERE id = ?", (token_id,))
+    conn.commit()
+    conn.close()
+    return True

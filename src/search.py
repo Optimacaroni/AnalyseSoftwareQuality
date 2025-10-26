@@ -1,6 +1,8 @@
 import sqlite3
 import re
+import time
 from safe_data import *
+from ui_helpers import clear as ui_clear, prompt_with_back
 
 '''
 How to use the search function:
@@ -28,6 +30,13 @@ ALLOWED_TABLES = {"USERS", "TRAVELLERS", "SCOOTERS", "RESTORECODES"}
 def search(search_term, table, column="*", role=None):
     connection = sqlite3.connect("scooterfleet.db")
     cursor = connection.cursor()
+    # Normalize search_term: strip whitespace and handle empty input consistently
+    if search_term is None:
+        search_term = ""
+    search_term = str(search_term).strip()
+    if search_term == "":
+        # Consistent empty result for empty/blank searches
+        return []
 
     table = table.upper()
     # reject unknown or malicious table identifiers
@@ -94,21 +103,89 @@ def search(search_term, table, column="*", role=None):
         return []
     return search_results
 
-def display_search_results(search_results, show_numbers=True):
+def display_search_results(search_results, show_numbers=True, rows_per_page=10, allow_select=False):
+    """Interactive paginated display of search results.
+
+    - If allow_select is False (default) this function only displays pages and returns None.
+    - If allow_select is True the user can enter a global result number to select an item; the
+      function returns the selected integer index (1-based) or None if cancelled.
+    """
     print("--- Results ---")
     if type(search_results) == str:
         print(search_results)
-        return
+        return None
     if not search_results or len(search_results) == 0:
         print("No results.")
-        return
+        return None
 
     header_cols = search_results[0][:4] if len(search_results[0]) >= 4 else search_results[0]
-    header = ("     " if show_numbers else "") + "".join(c.ljust(20) for c in header_cols)
-    print(header)
-    print("-" * len(header))
+    total_items = len(search_results) - 1
+    total_pages = (total_items + rows_per_page - 1) // rows_per_page
 
-    for i, result in enumerate(search_results[1:], start=1):
-        cols = result[:len(header_cols)]
-        line = (f"[{i}]  " if show_numbers else "") + "".join(str(c).ljust(20) for c in cols)
-        print(line)
+    current_page = 0
+    while True:
+        start = current_page * rows_per_page
+        end = start + rows_per_page
+        page_items = search_results[1:][start:end]
+
+        header = ("     " if show_numbers else "") + "".join(c.ljust(20) for c in header_cols)
+        print(header)
+        print("-" * len(header))
+
+        for i, result in enumerate(page_items, start=start + 1):
+            cols = result[:len(header_cols)]
+            line = (f"[{i}]  " if show_numbers else "") + "".join(str(c).ljust(20) for c in cols)
+            print(line)
+
+        # If only one page and not selectable, just return
+        if total_pages == 1 and not allow_select:
+            return None
+
+        # Navigation / selection prompt
+        nav_parts = []
+        if current_page > 0:
+            nav_parts.append("P. Previous")
+        if current_page < total_pages - 1:
+            nav_parts.append("N. Next")
+        if allow_select:
+            nav_parts.append("Enter number to select")
+        nav_parts.append("B. Go back")
+
+        prompt = " | ".join(nav_parts) + ": "
+        choice = prompt_with_back(prompt)
+
+        # prompt_with_back returns None when user pressed Enter or 'b'
+        if choice is None:
+            return None
+
+        if choice.lower() == 'p' and current_page > 0:
+            current_page -= 1
+            continue
+        if choice.lower() == 'n' and current_page < total_pages - 1:
+            current_page += 1
+            continue
+        # At this point choice is not None and not a direct back; handle 'b' explicitly just in case
+        if choice.lower() == 'b':
+            return None
+        if allow_select:
+            try:
+                sel = int(choice)
+                if 1 <= sel <= total_items:
+                    return sel
+                else:
+                    # clear before showing the invalid selection so the UI redraw is clean
+                    ui_clear()
+                    print('Invalid selection')
+                    time.sleep(2)
+                    continue
+            except ValueError:
+                ui_clear()
+                print('Invalid input')
+                time.sleep(2)
+                continue
+        else:
+            # unrecognized input when not selectable -> loop
+            ui_clear()
+            print('Invalid input')
+            time.sleep(2)
+            continue
